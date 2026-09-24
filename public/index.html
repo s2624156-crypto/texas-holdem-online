@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Texas Hold'em Online</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #081711;
+      color: white;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      min-height: 100vh;
+    }
+
+    .main {
+      padding: 16px;
+    }
+
+    .sidebar {
+      padding: 16px;
+      border-left: 1px solid rgba(255,255,255,0.1);
+      background: #0f231c;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .joinbar, .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    input, button {
+      border: none;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 14px;
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .table {
+      background: #0d6a44;
+      border: 4px solid #d4af37;
+      border-radius: 18px;
+      padding: 16px;
+      min-height: 520px;
+    }
+
+    .status {
+      margin-bottom: 12px;
+      font-weight: bold;
+    }
+
+    .communityCards, .cards {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .players {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .player {
+      background: rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .turn {
+      outline: 3px solid gold;
+    }
+
+    .folded {
+      opacity: 0.5;
+    }
+
+    .card {
+      width: 42px;
+      height: 60px;
+      background: white;
+      color: #111;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+    }
+
+    .red {
+      color: #c62828;
+    }
+
+    .back {
+      background: #28406b;
+      color: white;
+    }
+
+    .log {
+      margin-top: 16px;
+      background: rgba(0,0,0,0.22);
+      border-radius: 12px;
+      padding: 12px;
+      max-height: 180px;
+      overflow: auto;
+      white-space: pre-line;
+    }
+
+    .chatTitle {
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .chatBox {
+      flex: 1;
+      background: rgba(0,0,0,0.2);
+      border-radius: 12px;
+      padding: 10px;
+      overflow: auto;
+      white-space: pre-line;
+      margin-bottom: 10px;
+    }
+
+    .chatInputRow {
+      display: flex;
+      gap: 8px;
+    }
+
+    .sectionTitle {
+      font-weight: bold;
+      margin-top: 8px;
+    }
+
+    @media (max-width: 900px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+      .sidebar {
+        border-left: none;
+        border-top: 1px solid rgba(255,255,255,0.1);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="main">
+      <div class="joinbar">
+        <input id="nameInput" placeholder="名前" value="Player1" />
+        <input id="roomInput" placeholder="ルームID" value="room1" />
+        <button onclick="joinRoom()">参加</button>
+        <button onclick="startGame()">開始</button>
+      </div>
+
+      <div class="table">
+        <div class="status" id="status">未接続</div>
+
+        <div>
+          <div class="sectionTitle">コミュニティカード</div>
+          <div class="communityCards" id="communityCards"></div>
+          <div id="pot">Pot: 0</div>
+        </div>
+
+        <div class="controls" id="controls"></div>
+
+        <div class="players" id="players"></div>
+
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="chatTitle">チャット</div>
+      <div class="chatBox" id="chatBox"></div>
+      <div class="chatInputRow">
+        <input id="chatInput" placeholder="メッセージ" />
+        <button onclick="sendChat()">送信</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let myId = null;
+    let currentState = null;
+
+    socket.on("connect", () => {
+      myId = socket.id;
+      document.getElementById("status").textContent = "接続済み";
+    });
+
+    socket.on("state", (state) => {
+      currentState = state;
+      render();
+    });
+
+    socket.on("chatMessage", ({ name, message }) => {
+      const chatBox = document.getElementById("chatBox");
+      chatBox.textContent += `${name}: ${message}\n`;
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    socket.on("errorMessage", (msg) => {
+      alert(msg);
+    });
+
+    function joinRoom() {
+      const name = document.getElementById("nameInput").value.trim() || "Player";
+      const roomId = document.getElementById("roomInput").value.trim() || "room1";
+      socket.emit("joinRoom", { roomId, name });
+    }
+
+    function startGame() {
+      socket.emit("startGame");
+    }
+
+    function sendChat() {
+      const input = document.getElementById("chatInput");
+      const message = input.value.trim();
+      if (!message) return;
+      socket.emit("chat", message);
+      input.value = "";
+    }
+
+    function action(type) {
+      let amount = 0;
+      if (type === "raise") {
+        amount = Number(prompt("レイズ後の合計ベット額を入力", "40")) || 40;
+      }
+      socket.emit("action", { action: type, amount });
+    }
+
+    function rankLabel(rank) {
+      if (rank === 11) return "J";
+      if (rank === 12) return "Q";
+      if (rank === 13) return "K";
+      if (rank === 14) return "A";
+      return String(rank);
+    }
+
+    function cardHtml(card) {
+      if (card.hidden) {
+        return `<div class="card back">🂠</div>`;
+      }
+      const red = (card.suit === "♥" || card.suit === "♦") ? "red" : "";
+      return `<div class="card ${red}">${rankLabel(card.rank)}${card.suit}</div>`;
+    }
+
+    function render() {
+      if (!currentState) return;
+
+      document.getElementById("status").textContent =
+        `Room: ${currentState.roomId} / Stage: ${currentState.stage} / Current Bet: ${currentState.currentBet}`;
+
+      document.getElementById("pot").textContent = `Pot: ${currentState.pot}`;
+
+      const community = document.getElementById("communityCards");
+      community.innerHTML = currentState.communityCards.map(cardHtml).join("");
+
+      const playersEl = document.getElementById("players");
+      playersEl.innerHTML = currentState.players.map(p => `
+        <div class="player ${p.isTurn ? "turn" : ""} ${p.folded ? "folded" : ""}">
+          <div><strong>${p.name}</strong> ${p.isDealer ? "(D)" : ""}</div>
+          <div>Chips: ${p.chips}</div>
+          <div>Bet: ${p.bet}</div>
+          <div>${p.folded ? "Folded" : p.allIn ? "All-in" : ""}</div>
+          <div>${p.handName || ""}</div>
+          <div class="cards">
+            ${p.cards.map(cardHtml).join("")}
+          </div>
+        </div>
+      `).join("");
+
+      const controls = document.getElementById("controls");
+      if (currentState.turnPlayerId === myId && currentState.stage !== "finished") {
+        controls.innerHTML = `
+          <button onclick="action('call')">Call / Check</button>
+          <button onclick="action('raise')">Raise</button>
+          <button onclick="action('fold')">Fold</button>
+        `;
+      } else {
+        controls.innerHTML = "";
+      }
+
+      document.getElementById("log").textContent = currentState.log.join("\n");
+    }
+
+    document.getElementById("chatInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendChat();
+    });
+  </script>
+</body>
+</html>
